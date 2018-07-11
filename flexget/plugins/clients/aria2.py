@@ -3,6 +3,7 @@ from builtins import *  # noqa pylint: disable=unused-import, redefined-builtin
 
 import logging
 import os
+import ssl
 import xmlrpc.client
 from socket import error as socket_error
 
@@ -30,6 +31,7 @@ class OutputAria2(object):
             'server': {'type': 'string', 'default': 'localhost'},
             'port': {'type': 'integer', 'default': 6800},
             'secret': {'type': 'string', 'default': ''},
+            'secure': {'type': 'boolean'},
             'username': {'type': 'string', 'default': ''}, # NOTE: To be deprecated by aria2
             'password': {'type': 'string', 'default': ''},
             'path': {'type': 'string'},
@@ -44,16 +46,24 @@ class OutputAria2(object):
         'additionalProperties': False
     }
 
-    def aria2_connection(self, server, port, username=None, password=None):
+    def aria2_connection(self, server, port, username=None, password=None, secure=False):
         if username and password:
             userpass = '%s:%s@' % (username, password)
         else:
             userpass = ''
-        url = 'http://%s%s:%s/rpc' % (userpass, server, port)
+        if secure:
+            scheme = 'https'
+        else:
+            scheme = 'http'
+        url = '%s://%s%s:%s/rpc' % (scheme, userpass, server, port)
         log.debug('aria2 url: %s' % url)
         log.info('Connecting to daemon at %s', url)
         try:
-            return xmlrpc.client.ServerProxy(url).aria2
+            if secure:
+                context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
+                return xmlrpc.client.ServerProxy(url, context=context).aria2
+            else:
+                return xmlrpc.client.ServerProxy(url).aria2
         except xmlrpc.client.ProtocolError as err:
             raise plugin.PluginError('Could not connect to aria2 at %s. Protocol error %s: %s'
                               % (url, err.errcode, err.errmsg), log)
@@ -72,6 +82,7 @@ class OutputAria2(object):
         config.setdefault('username', '')
         config.setdefault('password', '')
         config.setdefault('secret', '')
+        config.setdefault('secure', False)
         config.setdefault('options', {})
         return config
 
@@ -81,7 +92,7 @@ class OutputAria2(object):
             return
         config = self.prepare_config(config)
         aria2 = self.aria2_connection(config['server'], config['port'],
-                                      config['username'], config['password'])
+                                      config['username'], config['password'], config['secure'])
         for entry in task.accepted:
             if task.options.test:
                 log.verbose('Would add `%s` to aria2.', entry['title'])
